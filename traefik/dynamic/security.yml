@@ -1,0 +1,52 @@
+# Shared TLS policy and middlewares (file provider, hot-reloaded).
+
+tls:
+  options:
+    default:
+      minVersion: VersionTLS12
+      sniStrict: true
+      curvePreferences: [X25519, CurveP256, CurveP384]
+      cipherSuites:
+        # TLS 1.2 only; TLS 1.3 suites are not configurable and always secure.
+        - TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
+        - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+        - TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
+        - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+        - TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256
+        - TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256
+
+http:
+  middlewares:
+    # Applied to every HTTPS request (entrypoint default).
+    security-headers:
+      headers:
+        stsSeconds: 31536000
+        stsIncludeSubdomains: false   # enable only if every subdomain is HTTPS
+        stsPreload: false
+        contentTypeNosniff: true
+        # Use DENY if surveys are never embedded; remove to allow embedding elsewhere.
+        customFrameOptionsValue: SAMEORIGIN
+        referrerPolicy: strict-origin-when-cross-origin
+        permissionsPolicy: "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()"
+        customResponseHeaders:
+          X-Powered-By: ""
+          Server: ""
+          X-Robots-Tag: "noindex, nofollow"
+
+    compress:
+      compress:
+        minResponseBodyBytes: 1024
+
+    # Admin UI and API: generous enough for the SPA-like admin, stops floods.
+    admin-ratelimit:
+      rateLimit:
+        average: 20
+        period: 1s
+        burst: 100
+
+    # Login endpoint: ~10 attempts per minute per client IP.
+    login-ratelimit:
+      rateLimit:
+        average: 10
+        period: 1m
+        burst: 10

@@ -1,0 +1,228 @@
+# LimeSurvey stack: Traefik (TLS, Let's Encrypt) + LimeSurvey + MariaDB + backups.
+# Settings come from .env (see .env.example); secrets from ./secrets (install.sh).
+
+name: ${STACK_NAME:-limesurvey}
+
+x-hardening: &hardening
+  restart: unless-stopped
+  security_opt:
+    - no-new-privileges:true
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "5"
+
+services:
+  # Read-only, filtered Docker API for Traefik (no direct docker.sock in Traefik).
+  socket-proxy:
+    <<: *hardening
+    image: tecnativa/docker-socket-proxy:v0.5.0
+    read_only: true
+    tmpfs:
+      - /run
+      - /tmp
+      - /var/lib/haproxy
+    environment:
+      CONTAINERS: 1
+      EVENTS: 1
+      PING: 1
+      VERSION: 1
+      POST: 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [socket]
+    mem_limit: 64m
+
+  traefik:
+    <<: *hardening
+    image: traefik:v3.7
+    depends_on: [socket-proxy]
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    command:
+      - --global.checkNewVersion=false
+      - --global.sendAnonymousUsage=false
+      - --log.level=${TRAEFIK_LOG_LEVEL:-INFO}
+      - --accesslog=true
+      - --accesslog.format=json
+      - --accesslog.fields.headers.defaultmode=drop
+      - --ping=true
+      - --ping.entrypoint=ping
+      - --entrypoints.ping.address=127.0.0.1:8082
+      # HTTP only redirects to HTTPS (and answers ACME HTTP-01 challenges).
+      - --entrypoints.web.address=:80
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --entrypoints.web.http.redirections.entrypoint.permanent=true
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.websecure.http.tls.certresolver=le
+      - --entrypoints.websecure.http.middlewares=security-headers@file,compress@file
+      - --entrypoints.websecure.transport.respondingTimeouts.readTimeout=600s
+      - --entrypoints.websecure.transport.respondingTimeouts.writeTimeout=600s
+      - --entrypoints.websecure.transport.respondingTimeouts.idleTimeout=180s
+      - --providers.docker.endpoint=tcp://socket-proxy:2375
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=${STACK_NAME:-limesurvey}-proxy
+      - --providers.file.directory=/etc/traefik/dynamic
+      - --providers.file.watch=true
+      - --certificatesresolvers.le.acme.email=${ACME_EMAIL:?ACME_EMAIL is required}
+      - --certificatesresolvers.le.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.le.acme.caserver=${ACME_CA_SERVER:-https://acme-v02.api.letsencrypt.org/directory}
+      - --certificatesresolvers.le.acme.httpchallenge.entrypoint=web
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./traefik/dynamic:/etc/traefik/dynamic:ro
+      - letsencrypt:/letsencrypt
+    networks: [proxy, socket]
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping", "--ping.entrypoint=ping", "--entrypoints.ping.address=127.0.0.1:8082"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    mem_limit: 256m
+
+  limesurvey:
+    <<: *hardening
+    build:
+      context: ./limesurvey
+      args:
+        LIMESURVEY_VERSION: ${LIMESURVEY_VERSION:-7.10.0+261109}
+        LIMESURVEY_SHA256: ${LIMESURVEY_SHA256:-372551db149955883c4942d492c6c252ca31e55ad53e0561e1576d6d18e7c217}
+    image: ${STACK_NAME:-limesurvey}-app:local
+    depends_on:
+      db:
+        condition: service_healthy
+    read_only: true
+    cap_drop: [ALL]
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+      - /var/run/apache2:uid=33,gid=33,mode=0750
+      - /var/lock/apache2:uid=33,gid=33,mode=0750
+      - /var/www/html/tmp:size=1g,uid=33,gid=33,mode=0750
+    environment:
+      TZ: ${TZ:-UTC}
+      DB_HOST: db
+      DB_NAME: limesurvey
+      DB_USER: limesurvey
+      DB_PASSWORD_FILE: /run/secrets/db_password
+      DB_TABLE_PREFIX: ${DB_TABLE_PREFIX:-lime_}
+      ADMIN_USER: ${ADMIN_USER:-admin}
+      ADMIN_NAME: ${ADMIN_NAME:-Administrator}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:?ADMIN_EMAIL is required}
+      ADMIN_PASSWORD_FILE: /run/secrets/admin_password
+    secrets: [db_password, admin_password]
+    volumes:
+      - upload:/var/www/html/upload
+      - state:/var/lib/limesurvey
+    networks: [proxy, backend]
+    mem_limit: ${LIMESURVEY_MEM_LIMIT:-1g}
+    cpus: ${LIMESURVEY_CPUS:-2}
+    labels:
+      traefik.enable: "true"
+      # Public surveys
+      traefik.http.routers.ls.rule: Host(`${LS_DOMAIN:?LS_DOMAIN is required}`)
+      traefik.http.routers.ls.entrypoints: websecure
+      traefik.http.routers.ls.service: ls
+      # Admin panel (path and ?r= route styles): IP allow-list + rate limit
+      traefik.http.routers.ls-admin.rule: >-
+        Host(`${LS_DOMAIN}`) && (PathPrefix(`/admin`) || PathPrefix(`/index.php/admin`)
+        || PathPrefix(`/rest`) || PathPrefix(`/index.php/rest`) || QueryRegexp(`r`, `^/?(admin|rest)`))
+      traefik.http.routers.ls-admin.entrypoints: websecure
+      traefik.http.routers.ls-admin.priority: "100"
+      traefik.http.routers.ls-admin.middlewares: ls-admin-allow,admin-ratelimit@file
+      traefik.http.routers.ls-admin.service: ls
+      # Login form: strict rate limit against brute force
+      traefik.http.routers.ls-login.rule: >-
+        Host(`${LS_DOMAIN}`) && (PathPrefix(`/admin/authentication`)
+        || PathPrefix(`/index.php/admin/authentication`) || QueryRegexp(`r`, `^/?admin/authentication`))
+      traefik.http.routers.ls-login.entrypoints: websecure
+      traefik.http.routers.ls-login.priority: "200"
+      traefik.http.routers.ls-login.middlewares: ls-admin-allow,login-ratelimit@file
+      traefik.http.routers.ls-login.service: ls
+      traefik.http.middlewares.ls-admin-allow.ipallowlist.sourcerange: ${ADMIN_ALLOW_CIDRS:-0.0.0.0/0,::/0}
+      traefik.http.services.ls.loadbalancer.server.port: "8080"
+
+  db:
+    <<: *hardening
+    image: mariadb:11.4
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --skip-name-resolve
+      - --local-infile=0
+      - --max-allowed-packet=64M
+      - --innodb-buffer-pool-size=${DB_BUFFER_POOL:-256M}
+    cap_drop: [ALL]
+    cap_add: [CHOWN, SETUID, SETGID, DAC_OVERRIDE]
+    environment:
+      TZ: ${TZ:-UTC}
+      MARIADB_DATABASE: limesurvey
+      MARIADB_USER: limesurvey
+      MARIADB_PASSWORD_FILE: /run/secrets/db_password
+      MARIADB_ROOT_PASSWORD_FILE: /run/secrets/db_root_password
+      MARIADB_AUTO_UPGRADE: "1"
+    secrets: [db_password, db_root_password]
+    volumes:
+      - db:/var/lib/mysql
+    networks: [backend]
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      start_period: 60s
+      retries: 6
+    mem_limit: ${DB_MEM_LIMIT:-1g}
+
+  backup:
+    <<: *hardening
+    image: mariadb:11.4
+    depends_on:
+      db:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "/opt/backup/backup.sh"]
+    command: ["schedule"]
+    user: "0:0"
+    cap_drop: [ALL]
+    # Read files owned by www-data (uploads, keys) without any other privilege.
+    cap_add: [DAC_READ_SEARCH]
+    read_only: true
+    tmpfs: [/tmp]
+    environment:
+      TZ: ${TZ:-UTC}
+      BACKUP_TIME: ${BACKUP_TIME:-03:15}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+      DB_PASSWORD_FILE: /run/secrets/db_password
+    secrets: [db_password]
+    volumes:
+      - ./backup/backup.sh:/opt/backup/backup.sh:ro
+      - ./backups:/backups
+      - upload:/data/upload:ro
+      - state:/data/state:ro
+    networks: [backend]
+    mem_limit: 256m
+
+volumes:
+  letsencrypt:
+  upload:
+  state:
+  db:
+
+networks:
+  proxy:
+    name: ${STACK_NAME:-limesurvey}-proxy
+  backend:
+    internal: true
+  socket:
+    internal: true
+
+secrets:
+  db_password:
+    file: ./secrets/db_password
+  db_root_password:
+    file: ./secrets/db_root_password
+  admin_password:
+    file: ./secrets/admin_password

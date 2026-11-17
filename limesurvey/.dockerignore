@@ -1,0 +1,6 @@
+*
+!Dockerfile
+!apache.conf
+!php.ini
+!entrypoint.sh
+!healthz.php
