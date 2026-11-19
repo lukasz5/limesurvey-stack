@@ -1,4 +1,6 @@
-# LimeSurvey — stack Docker do szybkiego wdrożenia
+# Stack Docker dla LimeSurvey — szybkie i bezpieczne wdrożenie
+
+> 🇬🇧 [English version (README.en.md)](./README.en.md)
 
 Gotowy, zabezpieczony zestaw do uruchomienia LimeSurvey na serwerze Ubuntu z Dockerem:
 
@@ -39,10 +41,14 @@ Bez okienek (np. przez prosty terminal): `sudo ./install.sh --plain`.
 Tryb nieinteraktywny (automatyzacja, Ansible, cloud-init):
 
 ```bash
-sudo LS_DOMAIN=ankiety.example.com ACME_EMAIL=it@example.com ADMIN_EMAIL=it@example.com ./install.sh --yes --firewall
+sudo LS_DOMAIN=ankiety.example.com ACME_EMAIL=it@example.com ADMIN_EMAIL=it@example.com ./install.sh --yes --firewall --lang pl
 ```
 
 Hasło pierwszego administratora: `sudo cat secrets/admin_password`. Zmień je po pierwszym logowaniu.
+
+### Język instalatora
+
+Instalator działa po polsku i po angielsku. Przy pierwszym uruchomieniu pyta o język (przy polskim locale systemu od razu wybiera polski) i zapamiętuje wybór w `.env` (`INSTALLER_LANG`). Język można też wskazać wprost: `--lang pl` / `--lang en` albo zmienną `LS_LANG`.
 
 ## Menu zarządzania
 
