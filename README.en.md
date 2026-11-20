@@ -8,7 +8,7 @@ A ready-made, hardened kit for running LimeSurvey on an Ubuntu server with Docke
 | --- | --- | --- |
 | `traefik` | `traefik:v3.7` | HTTPS, Let's Encrypt certificates, security headers, rate limits |
 | `socket-proxy` | `tecnativa/docker-socket-proxy:v0.5.0` | read-only Docker API access for Traefik |
-| `limesurvey` | built locally (PHP 8.3 + Apache) | LimeSurvey 7.10.0, read-only code |
+| `limesurvey` | built locally (PHP 8.3.37 + Apache) | LimeSurvey 7.10.0, read-only code |
 | `db` | `mariadb:11.4` (LTS) | database, reachable only on the internal network |
 | `backup` | `mariadb:11.4` | daily backup of the database, files and encryption keys |
 

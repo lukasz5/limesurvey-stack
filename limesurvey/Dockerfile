@@ -4,7 +4,9 @@
 # The code tree is immutable; only upload/, tmp/ and the generated config
 # files (via symlinks into /var/lib/limesurvey) are writable at runtime.
 
-ARG PHP_VERSION=8.3
+# Pinned to a patch release so every rebuild gets the same, patched PHP.
+# Bump on each PHP security release (https://www.php.net/releases/).
+ARG PHP_VERSION=8.3.37
 
 # ---- Fetch and verify the release ----
 FROM debian:bookworm-slim AS source

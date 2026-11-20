@@ -8,7 +8,7 @@ Gotowy, zabezpieczony zestaw do uruchomienia LimeSurvey na serwerze Ubuntu z Doc
 | --- | --- | --- |
 | `traefik` | `traefik:v3.7` | HTTPS, certyfikaty Let's Encrypt, nagłówki bezpieczeństwa, limity zapytań |
 | `socket-proxy` | `tecnativa/docker-socket-proxy:v0.5.0` | dostęp Traefika do Docker API tylko do odczytu |
-| `limesurvey` | budowany lokalnie (PHP 8.3 + Apache) | LimeSurvey 7.10.0, kod tylko do odczytu |
+| `limesurvey` | budowany lokalnie (PHP 8.3.37 + Apache) | LimeSurvey 7.10.0, kod tylko do odczytu |
 | `db` | `mariadb:11.4` (LTS) | baza danych, dostępna wyłącznie w sieci wewnętrznej |
 | `backup` | `mariadb:11.4` | codzienny backup bazy, plików i kluczy szyfrowania |
 
